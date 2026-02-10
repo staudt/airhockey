@@ -261,6 +261,50 @@
         };
 
         // ============================================
+        // AUDIO MANAGER
+        // ============================================
+        class AudioManager {
+            constructor() {
+                this.sounds = {};
+                this.enabled = true;
+                this.loadSounds();
+            }
+
+            loadSounds() {
+                const soundFiles = {
+                    wallhit: './media/wallhit.wav',
+                    paddlehit: './media/paddlehit.wav',
+                    launch: './media/launch.wav',
+                    finish: './media/finish.wav',
+                    goal: './media/goal.wav',
+                    bonus: './media/bonus.wav'
+                };
+
+                for (const [name, path] of Object.entries(soundFiles)) {
+                    this.sounds[name] = new Audio(path);
+                    this.sounds[name].preload = 'auto';
+                }
+            }
+
+            play(soundName) {
+                if (!this.enabled || !this.sounds[soundName]) return;
+
+                // Clone the audio to allow overlapping sounds
+                const sound = this.sounds[soundName].cloneNode();
+                sound.volume = 0.3; // Set volume to 30% to avoid being too loud
+                sound.play().catch(err => {
+                    // Ignore errors (e.g., user hasn't interacted with page yet)
+                    console.debug('Audio play failed:', err.message);
+                });
+            }
+
+            toggle() {
+                this.enabled = !this.enabled;
+                return this.enabled;
+            }
+        }
+
+        // ============================================
         // UTILITY CLASSES
         // ============================================
         class Vector2D {
@@ -590,7 +634,8 @@
         // PHYSICS ENGINE
         // ============================================
         class PhysicsEngine {
-            constructor() {
+            constructor(game) {
+                this.game = game;
                 this.goalWidth = 150;
             }
 
@@ -687,6 +732,11 @@
                         disk.velocity.y *= -CONFIG.physics.wallRestitution;
                         collided = true;
                     }
+                }
+
+                // Play wall hit sound
+                if (collided && this.game) {
+                    this.game.audio.play('wallhit');
                 }
 
                 return collided;
@@ -804,6 +854,11 @@
 
                 // Limit max speed
                 disk.velocity.limit(CONFIG.physics.maxDiskSpeed);
+
+                // Play paddle hit sound
+                if (this.game) {
+                    this.game.audio.play('paddlehit');
+                }
             }
         }
 
@@ -1009,7 +1064,10 @@
                     Math.random() * (CONFIG.bonus.effectDurationMax - CONFIG.bonus.effectDurationMin);
 
                 let effect = null;
+                // Bonus is hit on a side, but favors the OPPOSITE side
+                // If hit in top half (CPU side), favor player; if hit in bottom half (player side), favor CPU
                 const isPlayerSide = disk.position.y > this.game.canvas.height / 2;
+                const favoredSide = isPlayerSide ? 'cpu' : 'player';
 
                 switch (bonus.type) {
                     case BONUS_TYPES.MULTI_DISK:
@@ -1022,10 +1080,12 @@
                         effect = new SpeedEffect(duration, currentTime, 0.5);
                         break;
                     case BONUS_TYPES.SIZE_LARGE_PADDLE:
-                        effect = new SizeEffect(duration, currentTime, 'paddle', 1.5, isPlayerSide ? 'player' : 'cpu');
+                        // Give large paddle to the favored side
+                        effect = new SizeEffect(duration, currentTime, 'paddle', 1.5, favoredSide);
                         break;
                     case BONUS_TYPES.SIZE_SMALL_PADDLE:
-                        effect = new SizeEffect(duration, currentTime, 'paddle', 0.6, isPlayerSide ? 'cpu' : 'player');
+                        // Give small paddle to the opposite of the favored side (punish opponent)
+                        effect = new SizeEffect(duration, currentTime, 'paddle', 0.6, favoredSide === 'player' ? 'cpu' : 'player');
                         break;
                     case BONUS_TYPES.SIZE_LARGE_DISK:
                         effect = new SizeEffect(duration, currentTime, 'disk', 1.5);
@@ -1034,11 +1094,15 @@
                         effect = new SizeEffect(duration, currentTime, 'disk', 0.6);
                         break;
                     case BONUS_TYPES.SHIELD:
-                        effect = new ShieldEffect(duration, currentTime, isPlayerSide ? 'player' : 'cpu');
+                        // Give shield to the favored side
+                        effect = new ShieldEffect(duration, currentTime, favoredSide);
                         break;
                 }
 
                 if (effect) {
+                    // Play bonus sound
+                    this.game.audio.play('bonus');
+
                     effect.apply(this.game);
                     this.activeEffects.push(effect);
                 }
@@ -1504,7 +1568,8 @@
                 );
 
                 // Systems
-                this.physics = new PhysicsEngine();
+                this.audio = new AudioManager();
+                this.physics = new PhysicsEngine(this);
                 this.ai = new AIController(this.cpuPaddle);
                 this.bonusSystem = new BonusSystem(this);
                 this.input = new InputHandler(canvas, this);
@@ -1571,6 +1636,9 @@
                     new Vector2D(this.canvas.width / 2, this.canvas.height / 2),
                     new Vector2D(Math.cos(angle), Math.sin(angle))
                 );
+
+                // Play launch sound
+                this.audio.play('launch');
             }
 
             update(deltaTime) {
@@ -1685,6 +1753,9 @@
                 const goalColor = scorer === 'player' ? CONFIG.visual.playerColor : CONFIG.visual.cpuColor;
                 this.spawnGoalParticles(this.canvas.width / 2, goalY, goalColor);
 
+                // Play goal sound
+                this.audio.play('goal');
+
                 // Remove scored disk (but keep main disk if it's index 0)
                 if (diskIndex > 0) {
                     this.disks.splice(diskIndex, 1);
@@ -1695,8 +1766,9 @@
                 // AI adaptation
                 this.ai.recordGoal(scorer);
 
-                // Only handle game state if main disk scored
-                if (diskIndex === 0) {
+                // Only transition to GOAL_SCORED state if no active disks remain
+                const hasActiveDisks = this.disks.some(disk => disk.isActive);
+                if (!hasActiveDisks) {
                     // Transition to GOAL_SCORED state (brief pause, then countdown)
                     this.changeState(GAME_STATES.GOAL_SCORED);
                 }
@@ -1706,11 +1778,18 @@
                 const particleCount = 120;
                 const container = document.getElementById('gameContainer');
 
+                // Convert canvas coordinates to screen coordinates
+                const canvasRect = this.canvas.getBoundingClientRect();
+                const scaleX = canvasRect.width / this.canvas.width;
+                const scaleY = canvasRect.height / this.canvas.height;
+                const screenX = x * scaleX;
+                const screenY = y * scaleY;
+
                 for (let i = 0; i < particleCount; i++) {
                     const particle = document.createElement('div');
                     particle.className = 'goal-particle';
-                    particle.style.left = x + 'px';
-                    particle.style.top = y + 'px';
+                    particle.style.left = screenX + 'px';
+                    particle.style.top = screenY + 'px';
                     particle.style.backgroundColor = color;
 
                     // Random direction and distance
@@ -1765,6 +1844,9 @@
 
                 finalScore.textContent = `${this.playerScore} - ${this.cpuScore}`;
                 gameOverDiv.style.display = 'block';
+
+                // Play finish sound
+                this.audio.play('finish');
             }
 
             reset() {
