@@ -1,0 +1,1893 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Air Hockey Game</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Arial', sans-serif;
+            background: linear-gradient(135deg, #0a1628 0%, #1a2940 100%);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            overflow: hidden;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: none;
+        }
+
+        #gameContainer {
+            position: relative;
+            box-shadow: 0 0 50px rgba(0, 0, 0, 0.5);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        #gameCanvas {
+            display: block;
+            background: #0a1628;
+            cursor: crosshair;
+        }
+
+        #gameCanvas.locked {
+            cursor: none;
+        }
+
+        #ui {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            color: white;
+        }
+
+        #instructions {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            font-size: 18px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 20px 40px;
+            border-radius: 10px;
+            pointer-events: all;
+        }
+
+        #instructions h2 {
+            margin-bottom: 15px;
+            color: #4ecdc4;
+        }
+
+        #instructions button {
+            margin-top: 20px;
+            padding: 10px 30px;
+            font-size: 16px;
+            background: #4ecdc4;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            color: #0a1628;
+            font-weight: bold;
+        }
+
+        #instructions button:hover {
+            background: #3db8b0;
+        }
+
+        #gameOver {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            font-size: 24px;
+            background: rgba(0, 0, 0, 0.9);
+            padding: 40px;
+            border-radius: 10px;
+            display: none;
+            pointer-events: all;
+        }
+
+        #gameOver h2 {
+            margin-bottom: 20px;
+            font-size: 36px;
+        }
+
+        #gameOver button {
+            margin-top: 20px;
+            padding: 12px 40px;
+            font-size: 18px;
+            background: #4ecdc4;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            color: #0a1628;
+            font-weight: bold;
+        }
+
+        #countdown {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 72px;
+            font-weight: bold;
+            color: #ff6b35;
+            text-shadow: 0 0 20px rgba(255, 107, 53, 0.8);
+            display: none;
+        }
+
+        #effectsList {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            font-size: 18px;
+            font-weight: bold;
+            color: #4ecdc4;
+            text-shadow: 0 0 10px rgba(78, 205, 196, 0.8);
+            pointer-events: none;
+        }
+
+        .effect-item {
+            margin-bottom: 8px;
+            animation: fadeInOut 1s ease-in-out;
+        }
+
+        @keyframes fadeInOut {
+            0% { opacity: 0; transform: translateY(-10px); }
+            20% { opacity: 1; transform: translateY(0); }
+            80% { opacity: 1; transform: translateY(0); }
+            100% { opacity: 0; transform: translateY(10px); }
+        }
+
+        .goal-particle {
+            position: absolute;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            pointer-events: none;
+            animation: particleFloat 1.5s ease-out forwards;
+        }
+
+        @keyframes particleFloat {
+            0% { transform: translate(0, 0) scale(1); opacity: 1; }
+            100% { transform: translate(var(--tx), var(--ty)) scale(0); opacity: 0; }
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas" width="600" height="800"></canvas>
+        <div id="ui">
+            <div id="instructions">
+                <h2>Air Hockey</h2>
+                <p><strong>Click your paddle (green)</strong> to take control<br>Move your mouse/finger to play<br>Click again (or press ESC) to release</p>
+                <p style="margin-top: 10px; font-size: 14px;">First to 7 goals wins!<br>Look for the yellow pulsing ring!</p>
+                <button id="startBtn">Start Game</button>
+            </div>
+            <div id="gameOver">
+                <h2 id="winnerText">You Win!</h2>
+                <p id="finalScore">7 - 0</p>
+                <button id="restartBtn">Play Again</button>
+            </div>
+            <div id="countdown"></div>
+            <div id="effectsList"></div>
+        </div>
+    </div>
+
+    <script>
+        // ============================================
+        // CONFIGURATION CONSTANTS
+        // ============================================
+        const CONFIG = {
+            game: {
+                winningScore: 7,
+                countdownTime: 2,
+                goalDelay: 2000
+            },
+            physics: {
+                friction: 0.99,
+                wallRestitution: 0.85,
+                paddleRestitution: 1.0,
+                maxDiskSpeed: 25,
+                minDiskSpeed: 0.1
+            },
+            paddle: {
+                radius: 30,
+                lerpFactor: 1.0,
+                activationRadius: 40
+            },
+            disk: {
+                radius: 15,
+                serveSpeed: 8
+            },
+            ai: {
+                startingDifficulty: 0.5,
+                adaptationRate: 0.02,
+                historySize: 50,
+                minDifficulty: 0.1,
+                maxDifficulty: 0.95
+            },
+            bonus: {
+                spawnInterval: 10000,
+                maxConcurrent: 2,
+                effectDurationMin: 5000,
+                effectDurationMax: 8000,
+                boxSize: 30,
+                multiDiskCount: [2, 3]
+            },
+            visual: {
+                glowEnabled: true,
+                backgroundColor: '#0a1628',
+                rinkColor: '#1a2940',
+                centerLineColor: '#ff6b35',
+                goalColor: '#4ecdc4',
+                playerColor: '#00ff88',
+                cpuColor: '#ff5555',
+                diskColor: '#ffffff'
+            }
+        };
+
+        const BONUS_TYPES = {
+            MULTI_DISK: 'multidisk',
+            SPEED_BOOST: 'speed_boost',
+            SPEED_SLOW: 'speed_slow',
+            SIZE_LARGE_PADDLE: 'size_large_paddle',
+            SIZE_SMALL_PADDLE: 'size_small_paddle',
+            SIZE_LARGE_DISK: 'size_large_disk',
+            SIZE_SMALL_DISK: 'size_small_disk',
+            SHIELD: 'shield'
+        };
+
+        const GAME_STATES = {
+            MENU: 'menu',
+            COUNTDOWN: 'countdown',
+            PLAYING: 'playing',
+            GOAL_SCORED: 'goal_scored',
+            PAUSED: 'paused',
+            GAME_OVER: 'gameover'
+        };
+
+        // ============================================
+        // UTILITY CLASSES
+        // ============================================
+        class Vector2D {
+            constructor(x = 0, y = 0) {
+                this.x = x;
+                this.y = y;
+            }
+
+            add(v) {
+                this.x += v.x;
+                this.y += v.y;
+                return this;
+            }
+
+            subtract(v) {
+                this.x -= v.x;
+                this.y -= v.y;
+                return this;
+            }
+
+            multiply(scalar) {
+                this.x *= scalar;
+                this.y *= scalar;
+                return this;
+            }
+
+            magnitude() {
+                return Math.sqrt(this.x * this.x + this.y * this.y);
+            }
+
+            normalize() {
+                const mag = this.magnitude();
+                if (mag > 0) {
+                    this.x /= mag;
+                    this.y /= mag;
+                }
+                return this;
+            }
+
+            dot(v) {
+                return this.x * v.x + this.y * v.y;
+            }
+
+            limit(max) {
+                if (this.magnitude() > max) {
+                    this.normalize();
+                    this.multiply(max);
+                }
+                return this;
+            }
+
+            copy() {
+                return new Vector2D(this.x, this.y);
+            }
+
+            static distance(v1, v2) {
+                const dx = v2.x - v1.x;
+                const dy = v2.y - v1.y;
+                return Math.sqrt(dx * dx + dy * dy);
+            }
+        }
+
+        // ============================================
+        // GAME OBJECTS
+        // ============================================
+        class Disk {
+            constructor(position, radius) {
+                this.id = Math.random();
+                this.position = position.copy();
+                this.velocity = new Vector2D(0, 0);
+                this.radius = radius;
+                this.originalRadius = radius;
+                this.isActive = true;
+            }
+
+            update(deltaTime) {
+                // Apply velocity
+                this.position.x += this.velocity.x * (deltaTime / 16.67);
+                this.position.y += this.velocity.y * (deltaTime / 16.67);
+
+                // Apply friction
+                this.velocity.multiply(CONFIG.physics.friction);
+
+                // Stop if very slow
+                if (this.velocity.magnitude() < CONFIG.physics.minDiskSpeed) {
+                    this.velocity.x = 0;
+                    this.velocity.y = 0;
+                }
+            }
+
+            reset(position, direction) {
+                this.position = position.copy();
+                this.velocity = direction.copy();
+                this.velocity.normalize();
+                this.velocity.multiply(CONFIG.disk.serveSpeed);
+                this.isActive = true;
+            }
+        }
+
+        class Paddle {
+            constructor(position, radius, isPlayer, canvas) {
+                this.position = position.copy();
+                this.velocity = new Vector2D(0, 0);
+                this.previousPosition = position.copy();
+                this.targetPosition = position.copy();
+                this.radius = radius;
+                this.originalRadius = radius;
+                this.isPlayer = isPlayer;
+                this.canvas = canvas;
+
+                // Set different lerp factors: instant for player, smooth for CPU
+                this.lerpFactor = isPlayer ? 1.0 : 0.15;
+
+                // Set boundaries
+                if (isPlayer) {
+                    this.boundaryMin = canvas.height / 2 + this.radius;
+                    this.boundaryMax = canvas.height - this.radius - 20;
+                } else {
+                    this.boundaryMin = this.radius + 20;
+                    this.boundaryMax = canvas.height / 2 - this.radius;
+                }
+            }
+
+            update(deltaTime) {
+                this.previousPosition = this.position.copy();
+
+                // Lerp toward target (uses instance lerpFactor)
+                const dx = this.targetPosition.x - this.position.x;
+                const dy = this.targetPosition.y - this.position.y;
+
+                this.position.x += dx * this.lerpFactor;
+                this.position.y += dy * this.lerpFactor;
+
+                // Constrain to boundaries
+                this.constrainToBoundary();
+
+                // Calculate velocity
+                if (deltaTime > 0) {
+                    this.velocity.x = (this.position.x - this.previousPosition.x) / (deltaTime / 16.67);
+                    this.velocity.y = (this.position.y - this.previousPosition.y) / (deltaTime / 16.67);
+                }
+            }
+
+            constrainToBoundary() {
+                // Vertical boundaries
+                this.position.y = Math.max(this.boundaryMin, Math.min(this.boundaryMax, this.position.y));
+
+                // Horizontal boundaries
+                this.position.x = Math.max(this.radius, Math.min(this.canvas.width - this.radius, this.position.x));
+            }
+        }
+
+        class Bonus {
+            constructor(type, position) {
+                this.type = type;
+                this.position = position.copy();
+                this.size = CONFIG.bonus.boxSize;
+                this.health = 1;
+                this.isActive = true;
+            }
+
+            checkCollision(disk) {
+                const dx = disk.position.x - this.position.x;
+                const dy = disk.position.y - this.position.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                return distance < disk.radius + this.size / 2;
+            }
+        }
+
+        // ============================================
+        // BONUS EFFECT CLASSES
+        // ============================================
+        class BonusEffect {
+            constructor(duration, startTime) {
+                this.duration = duration;
+                this.startTime = startTime;
+            }
+
+            isExpired(currentTime) {
+                return currentTime - this.startTime > this.duration;
+            }
+
+            getRemainingTime(currentTime) {
+                return Math.max(0, this.duration - (currentTime - this.startTime));
+            }
+
+            apply(game) {}
+            remove(game) {}
+            getName() { return 'Effect'; }
+        }
+
+        class MultiDiskEffect extends BonusEffect {
+            constructor(duration, startTime) {
+                super(duration, startTime);
+                this.spawnedDisks = [];
+            }
+
+            apply(game) {
+                const numDisks = CONFIG.bonus.multiDiskCount[0] +
+                    Math.floor(Math.random() * (CONFIG.bonus.multiDiskCount[1] - CONFIG.bonus.multiDiskCount[0] + 1));
+
+                for (let i = 0; i < numDisks; i++) {
+                    const fromLeft = i % 2 === 0;
+                    const disk = new Disk(
+                        new Vector2D(
+                            fromLeft ? 0 : game.canvas.width,
+                            game.canvas.height / 2
+                        ),
+                        CONFIG.disk.radius
+                    );
+
+                    const angle = fromLeft
+                        ? -Math.PI / 4 + Math.random() * Math.PI / 2
+                        : Math.PI * 3 / 4 + Math.random() * Math.PI / 2;
+
+                    const speed = 5 + Math.random() * 3;
+                    disk.velocity = new Vector2D(
+                        Math.cos(angle) * speed,
+                        Math.sin(angle) * speed
+                    );
+
+                    game.disks.push(disk);
+                    this.spawnedDisks.push(disk);
+                }
+            }
+
+            remove(game) {
+                // Don't remove multi-disks - they stay until they score!
+            }
+
+            getName() { return 'Multi-Disk'; }
+        }
+
+        class SpeedEffect extends BonusEffect {
+            constructor(duration, startTime, multiplier) {
+                super(duration, startTime);
+                this.multiplier = multiplier;
+            }
+
+            apply(game) {
+                game.disks.forEach(disk => {
+                    if (disk.isActive) {
+                        disk.velocity.multiply(this.multiplier);
+                    }
+                });
+            }
+
+            remove(game) {
+                // Speed effect is one-time, no need to undo
+            }
+
+            getName() {
+                return this.multiplier > 1 ? 'Speed Boost' : 'Speed Slow';
+            }
+        }
+
+        class SizeEffect extends BonusEffect {
+            constructor(duration, startTime, target, multiplier, owner = null) {
+                super(duration, startTime);
+                this.target = target;
+                this.multiplier = multiplier;
+                this.owner = owner;
+                this.originalSizes = {};
+            }
+
+            apply(game) {
+                if (this.target === 'paddle') {
+                    const paddle = this.owner === 'player' ? game.playerPaddle : game.cpuPaddle;
+                    this.originalSizes.paddle = paddle.radius;
+                    paddle.radius = paddle.originalRadius * this.multiplier;
+                } else if (this.target === 'disk') {
+                    game.disks.forEach(disk => {
+                        this.originalSizes[disk.id] = disk.radius;
+                        disk.radius = disk.originalRadius * this.multiplier;
+                    });
+                }
+            }
+
+            remove(game) {
+                if (this.target === 'paddle') {
+                    const paddle = this.owner === 'player' ? game.playerPaddle : game.cpuPaddle;
+                    paddle.radius = this.originalSizes.paddle;
+                } else if (this.target === 'disk') {
+                    game.disks.forEach(disk => {
+                        if (this.originalSizes[disk.id]) {
+                            disk.radius = this.originalSizes[disk.id];
+                        }
+                    });
+                }
+            }
+
+            getName() {
+                const size = this.multiplier > 1 ? 'Large' : 'Small';
+                const target = this.target === 'paddle' ? 'Paddle' : 'Disk';
+                return `${size} ${target}`;
+            }
+        }
+
+        class ShieldEffect extends BonusEffect {
+            constructor(duration, startTime, owner) {
+                super(duration, startTime);
+                this.owner = owner;
+            }
+
+            apply(game) {
+                if (this.owner === 'player') {
+                    game.playerShield = true;
+                } else {
+                    game.cpuShield = true;
+                }
+            }
+
+            remove(game) {
+                if (this.owner === 'player') {
+                    game.playerShield = false;
+                } else {
+                    game.cpuShield = false;
+                }
+            }
+
+            getName() {
+                return `${this.owner === 'player' ? 'Player' : 'CPU'} Shield`;
+            }
+        }
+
+        // ============================================
+        // PHYSICS ENGINE
+        // ============================================
+        class PhysicsEngine {
+            constructor() {
+                this.goalWidth = 150;
+            }
+
+            checkWallCollision(disk, canvas) {
+                let collided = false;
+                const goalLeft = canvas.width / 2 - this.goalWidth / 2;
+                const goalRight = canvas.width / 2 + this.goalWidth / 2;
+                const cornerRadius = 30; // Radius for rounded corners
+
+                // Define corner positions (skip goal corners)
+                const corners = [
+                    { x: 0, y: 0 }, // Top-left
+                    { x: canvas.width, y: 0 }, // Top-right
+                    { x: 0, y: canvas.height }, // Bottom-left
+                    { x: canvas.width, y: canvas.height } // Bottom-right
+                ];
+
+                // Check rounded corner collisions first
+                for (const corner of corners) {
+                    // Skip corners that are in goal areas
+                    if (corner.y === 0 && corner.x >= goalLeft && corner.x <= goalRight) continue;
+                    if (corner.y === canvas.height && corner.x >= goalLeft && corner.x <= goalRight) continue;
+
+                    const dx = disk.position.x - corner.x;
+                    const dy = disk.position.y - corner.y;
+                    const distanceToCorner = Math.sqrt(dx * dx + dy * dy);
+
+                    // If disk is within corner radius, treat it as circular collision
+                    if (distanceToCorner < cornerRadius + disk.radius && distanceToCorner > 0) {
+                        // Check if disk is actually in the corner quadrant
+                        const inCornerQuadrant =
+                            (corner.x === 0 && dx > 0 && corner.y === 0 && dy > 0) || // Top-left
+                            (corner.x === canvas.width && dx < 0 && corner.y === 0 && dy > 0) || // Top-right
+                            (corner.x === 0 && dx > 0 && corner.y === canvas.height && dy < 0) || // Bottom-left
+                            (corner.x === canvas.width && dx < 0 && corner.y === canvas.height && dy < 0); // Bottom-right
+
+                        if (inCornerQuadrant) {
+                            // Normalize the direction from corner to disk
+                            const nx = dx / distanceToCorner;
+                            const ny = dy / distanceToCorner;
+
+                            // Push disk away from corner
+                            const overlap = (cornerRadius + disk.radius) - distanceToCorner;
+                            disk.position.x += nx * overlap;
+                            disk.position.y += ny * overlap;
+
+                            // Calculate velocity along collision normal
+                            const velAlongNormal = disk.velocity.x * nx + disk.velocity.y * ny;
+
+                            // Only bounce if moving toward corner
+                            if (velAlongNormal < 0) {
+                                // Reflect velocity along normal
+                                disk.velocity.x -= 2 * velAlongNormal * nx;
+                                disk.velocity.y -= 2 * velAlongNormal * ny;
+
+                                // Apply restitution
+                                disk.velocity.x *= CONFIG.physics.wallRestitution;
+                                disk.velocity.y *= CONFIG.physics.wallRestitution;
+
+                                collided = true;
+                                return collided; // Corner handled, skip wall checks
+                            }
+                        }
+                    }
+                }
+
+                // Left wall
+                if (disk.position.x - disk.radius < 0) {
+                    disk.position.x = disk.radius;
+                    disk.velocity.x *= -CONFIG.physics.wallRestitution;
+                    collided = true;
+                }
+
+                // Right wall
+                if (disk.position.x + disk.radius > canvas.width) {
+                    disk.position.x = canvas.width - disk.radius;
+                    disk.velocity.x *= -CONFIG.physics.wallRestitution;
+                    collided = true;
+                }
+
+                // Top wall (but not goal area)
+                if (disk.position.y - disk.radius < 0) {
+                    if (disk.position.x < goalLeft || disk.position.x > goalRight) {
+                        disk.position.y = disk.radius;
+                        disk.velocity.y *= -CONFIG.physics.wallRestitution;
+                        collided = true;
+                    }
+                }
+
+                // Bottom wall (but not goal area)
+                if (disk.position.y + disk.radius > canvas.height) {
+                    if (disk.position.x < goalLeft || disk.position.x > goalRight) {
+                        disk.position.y = canvas.height - disk.radius;
+                        disk.velocity.y *= -CONFIG.physics.wallRestitution;
+                        collided = true;
+                    }
+                }
+
+                return collided;
+            }
+
+            checkPaddleCollision(disk, paddle) {
+                // First check discrete collision (current positions)
+                const dx = disk.position.x - paddle.position.x;
+                const dy = disk.position.y - paddle.position.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                const minDistance = disk.radius + paddle.radius;
+
+                if (distance < minDistance) {
+                    this.resolveCollision(disk, paddle, dx, dy, distance, minDistance);
+                    return true;
+                }
+
+                // Swept collision detection for fast-moving paddles
+                // This prevents tunneling when paddle moves faster than frame rate
+                const sweptResult = this.sweptCircleCollision(disk, paddle);
+                if (sweptResult.collided) {
+                    // Move paddle back to exact collision point
+                    const collisionX = paddle.previousPosition.x +
+                        (paddle.position.x - paddle.previousPosition.x) * sweptResult.time;
+                    const collisionY = paddle.previousPosition.y +
+                        (paddle.position.y - paddle.previousPosition.y) * sweptResult.time;
+
+                    // Calculate collision normal at intersection point
+                    const collisionDx = disk.position.x - collisionX;
+                    const collisionDy = disk.position.y - collisionY;
+                    const collisionDist = Math.sqrt(collisionDx * collisionDx + collisionDy * collisionDy);
+
+                    if (collisionDist > 0) {
+                        this.resolveCollision(disk, paddle, collisionDx, collisionDy, collisionDist, minDistance);
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            sweptCircleCollision(disk, paddle) {
+                // Vector from paddle's previous to current position
+                const moveX = paddle.position.x - paddle.previousPosition.x;
+                const moveY = paddle.position.y - paddle.previousPosition.y;
+                const moveLength = Math.sqrt(moveX * moveX + moveY * moveY);
+
+                // If paddle didn't move much, no need for swept collision
+                if (moveLength < 0.1) {
+                    return { collided: false };
+                }
+
+                // Vector from previous paddle position to disk
+                const toDiskX = disk.position.x - paddle.previousPosition.x;
+                const toDiskY = disk.position.y - paddle.previousPosition.y;
+
+                // Project disk onto paddle's movement line
+                const projection = (toDiskX * moveX + toDiskY * moveY) / (moveLength * moveLength);
+
+                // Clamp projection to line segment (0 to 1)
+                const clampedProjection = Math.max(0, Math.min(1, projection));
+
+                // Find closest point on line segment to disk center
+                const closestX = paddle.previousPosition.x + moveX * clampedProjection;
+                const closestY = paddle.previousPosition.y + moveY * clampedProjection;
+
+                // Distance from disk to closest point on path
+                const distX = disk.position.x - closestX;
+                const distY = disk.position.y - closestY;
+                const distToPath = Math.sqrt(distX * distX + distY * distY);
+
+                // Check if path gets close enough to disk for collision
+                const collisionDistance = disk.radius + paddle.radius;
+                if (distToPath < collisionDistance) {
+                    return {
+                        collided: true,
+                        time: clampedProjection
+                    };
+                }
+
+                return { collided: false };
+            }
+
+            resolveCollision(disk, paddle, dx, dy, distance, minDistance) {
+                // Normalize collision vector
+                const nx = dx / distance;
+                const ny = dy / distance;
+
+                // Separate objects
+                const overlap = minDistance - distance;
+                disk.position.x += nx * overlap;
+                disk.position.y += ny * overlap;
+
+                // Calculate relative velocity
+                const relVelX = disk.velocity.x - paddle.velocity.x;
+                const relVelY = disk.velocity.y - paddle.velocity.y;
+
+                // Velocity along collision normal
+                const velocityAlongNormal = relVelX * nx + relVelY * ny;
+
+                // Don't resolve if separating
+                if (velocityAlongNormal > 0) return;
+
+                // Calculate impulse
+                const impulseScalar = -(1 + CONFIG.physics.paddleRestitution) * velocityAlongNormal;
+
+                // Apply impulse
+                disk.velocity.x += impulseScalar * nx;
+                disk.velocity.y += impulseScalar * ny;
+
+                // Add paddle momentum (increased for more responsive hits)
+                const paddleInfluence = 0.8;
+                disk.velocity.x += paddle.velocity.x * paddleInfluence;
+                disk.velocity.y += paddle.velocity.y * paddleInfluence;
+
+                // Limit max speed
+                disk.velocity.limit(CONFIG.physics.maxDiskSpeed);
+            }
+        }
+
+        // ============================================
+        // AI CONTROLLER
+        // ============================================
+        class AIController {
+            constructor(paddle) {
+                this.paddle = paddle;
+                this.difficulty = CONFIG.ai.startingDifficulty;
+                this.playerSkillHistory = [];
+                this.lastUpdateTime = 0;
+                this.updateParameters();
+            }
+
+            updateParameters() {
+                this.reactionSpeed = 0.3 + this.difficulty * 0.7;
+                this.predictionAccuracy = 0.4 + this.difficulty * 0.6;
+                this.maxSpeed = 0.5 + this.difficulty * 0.5;
+                this.reactionDelay = 300 * (1 - this.reactionSpeed);
+                this.errorMargin = 100 * (1 - this.predictionAccuracy);
+            }
+
+            update(disks, deltaTime, currentTime) {
+                const targetDisk = this.findMostThreateningDisk(disks);
+
+                if (!targetDisk) {
+                    // Return to center
+                    this.paddle.targetPosition = new Vector2D(
+                        this.paddle.canvas.width / 2,
+                        this.paddle.boundaryMin + 50
+                    );
+                    return;
+                }
+
+                // Predict disk position
+                const predictedPosition = this.predictDiskPosition(targetDisk);
+
+                // Add error
+                const errorX = (Math.random() - 0.5) * this.errorMargin;
+                const errorY = (Math.random() - 0.5) * this.errorMargin;
+
+                this.paddle.targetPosition = new Vector2D(
+                    predictedPosition.x + errorX,
+                    predictedPosition.y + errorY
+                );
+            }
+
+            findMostThreateningDisk(disks) {
+                let closestDisk = null;
+                let minTime = Infinity;
+                const centerLine = this.paddle.canvas.height / 2;
+
+                // First priority: disks moving toward CPU
+                disks.forEach(disk => {
+                    if (!disk.isActive) return;
+
+                    if (disk.velocity.y < 0) {
+                        const distanceY = disk.position.y - this.paddle.boundaryMin;
+                        const timeToReach = Math.abs(distanceY / disk.velocity.y);
+
+                        if (timeToReach < minTime) {
+                            minTime = timeToReach;
+                            closestDisk = disk;
+                        }
+                    }
+                });
+
+                // If no disk is moving toward CPU, go after any disk on CPU's side
+                if (!closestDisk) {
+                    let minDistance = Infinity;
+                    disks.forEach(disk => {
+                        if (!disk.isActive) return;
+
+                        // Check if disk is on CPU's side (top half)
+                        if (disk.position.y < centerLine) {
+                            const distance = Vector2D.distance(disk.position, this.paddle.position);
+                            if (distance < minDistance) {
+                                minDistance = distance;
+                                closestDisk = disk;
+                            }
+                        }
+                    });
+                }
+
+                return closestDisk;
+            }
+
+            predictDiskPosition(disk) {
+                const lookaheadTime = 0.5 / this.reactionSpeed;
+                let predictedX = disk.position.x + disk.velocity.x * lookaheadTime;
+                let predictedY = disk.position.y + disk.velocity.y * lookaheadTime;
+
+                // Simple wall bounce prediction
+                while (predictedX < 0 || predictedX > this.paddle.canvas.width) {
+                    if (predictedX < 0) {
+                        predictedX = -predictedX;
+                    } else {
+                        predictedX = 2 * this.paddle.canvas.width - predictedX;
+                    }
+                }
+
+                return new Vector2D(predictedX, predictedY);
+            }
+
+            recordGoal(scorer) {
+                if (scorer === 'cpu') {
+                    this.difficulty = Math.max(CONFIG.ai.minDifficulty, this.difficulty - 0.05);
+                } else {
+                    this.difficulty = Math.min(CONFIG.ai.maxDifficulty, this.difficulty + 0.05);
+                }
+                this.updateParameters();
+            }
+        }
+
+        // ============================================
+        // BONUS SYSTEM
+        // ============================================
+        class BonusSystem {
+            constructor(game) {
+                this.game = game;
+                this.bonuses = [];
+                this.activeEffects = [];
+                this.spawnTimer = 0;
+
+                this.bonusWeights = {
+                    [BONUS_TYPES.MULTI_DISK]: 15,
+                    [BONUS_TYPES.SPEED_BOOST]: 20,
+                    [BONUS_TYPES.SPEED_SLOW]: 20,
+                    [BONUS_TYPES.SIZE_LARGE_PADDLE]: 15,
+                    [BONUS_TYPES.SIZE_SMALL_PADDLE]: 10,
+                    [BONUS_TYPES.SIZE_LARGE_DISK]: 10,
+                    [BONUS_TYPES.SIZE_SMALL_DISK]: 10,
+                    [BONUS_TYPES.SHIELD]: 10
+                };
+            }
+
+            update(deltaTime, currentTime) {
+                this.spawnTimer += deltaTime;
+
+                if (this.spawnTimer >= CONFIG.bonus.spawnInterval &&
+                    this.bonuses.length < CONFIG.bonus.maxConcurrent) {
+                    this.spawnRandomBonus();
+                    this.spawnTimer = 0;
+                }
+
+                // Update effects
+                for (let i = this.activeEffects.length - 1; i >= 0; i--) {
+                    const effect = this.activeEffects[i];
+                    if (effect.isExpired(currentTime)) {
+                        effect.remove(this.game);
+                        this.activeEffects.splice(i, 1);
+                    }
+                }
+            }
+
+            spawnRandomBonus() {
+                const type = this.weightedRandomType();
+                const position = this.getRandomPosition();
+                const bonus = new Bonus(type, position);
+                this.bonuses.push(bonus);
+            }
+
+            weightedRandomType() {
+                const totalWeight = Object.values(this.bonusWeights).reduce((a, b) => a + b, 0);
+                let random = Math.random() * totalWeight;
+
+                for (const [type, weight] of Object.entries(this.bonusWeights)) {
+                    random -= weight;
+                    if (random <= 0) return type;
+                }
+
+                return BONUS_TYPES.SPEED_BOOST;
+            }
+
+            getRandomPosition() {
+                const margin = 50;
+                const centerLine = this.game.canvas.height / 2;
+                const safeZone = 100;
+                const isTopHalf = Math.random() < 0.5;
+
+                return new Vector2D(
+                    margin + Math.random() * (this.game.canvas.width - 2 * margin),
+                    isTopHalf
+                        ? margin + Math.random() * (centerLine - safeZone - margin)
+                        : centerLine + safeZone + Math.random() * (centerLine - safeZone - margin)
+                );
+            }
+
+            checkCollisions(disk) {
+                for (let i = this.bonuses.length - 1; i >= 0; i--) {
+                    const bonus = this.bonuses[i];
+                    if (bonus.checkCollision(disk)) {
+                        this.activateBonus(bonus, disk);
+                        this.bonuses.splice(i, 1);
+                    }
+                }
+            }
+
+            activateBonus(bonus, disk) {
+                const currentTime = Date.now();
+                const duration = CONFIG.bonus.effectDurationMin +
+                    Math.random() * (CONFIG.bonus.effectDurationMax - CONFIG.bonus.effectDurationMin);
+
+                let effect = null;
+                const isPlayerSide = disk.position.y > this.game.canvas.height / 2;
+
+                switch (bonus.type) {
+                    case BONUS_TYPES.MULTI_DISK:
+                        effect = new MultiDiskEffect(duration, currentTime);
+                        break;
+                    case BONUS_TYPES.SPEED_BOOST:
+                        effect = new SpeedEffect(duration, currentTime, 1.5);
+                        break;
+                    case BONUS_TYPES.SPEED_SLOW:
+                        effect = new SpeedEffect(duration, currentTime, 0.5);
+                        break;
+                    case BONUS_TYPES.SIZE_LARGE_PADDLE:
+                        effect = new SizeEffect(duration, currentTime, 'paddle', 1.5, isPlayerSide ? 'player' : 'cpu');
+                        break;
+                    case BONUS_TYPES.SIZE_SMALL_PADDLE:
+                        effect = new SizeEffect(duration, currentTime, 'paddle', 0.6, isPlayerSide ? 'cpu' : 'player');
+                        break;
+                    case BONUS_TYPES.SIZE_LARGE_DISK:
+                        effect = new SizeEffect(duration, currentTime, 'disk', 1.5);
+                        break;
+                    case BONUS_TYPES.SIZE_SMALL_DISK:
+                        effect = new SizeEffect(duration, currentTime, 'disk', 0.6);
+                        break;
+                    case BONUS_TYPES.SHIELD:
+                        effect = new ShieldEffect(duration, currentTime, isPlayerSide ? 'player' : 'cpu');
+                        break;
+                }
+
+                if (effect) {
+                    effect.apply(this.game);
+                    this.activeEffects.push(effect);
+                }
+            }
+        }
+
+        // ============================================
+        // INPUT HANDLER
+        // ============================================
+        class InputHandler {
+            constructor(canvas, game) {
+                this.canvas = canvas;
+                this.game = game;
+                this.isActive = false;
+                this.isLocked = false;
+                this.paddlePosition = new Vector2D(0, 0);
+                this.previousPosition = new Vector2D(0, 0);
+                this.velocity = new Vector2D(0, 0);
+                this.maxSpeedDetected = 5;
+                this.speedSamples = [];
+                this.lastUpdateTime = 0;
+            }
+
+            init() {
+                // Mouse click to activate
+                this.canvas.addEventListener('mousedown', (e) => this.handlePointerDown(e));
+
+                // Touch events for mobile
+                this.canvas.addEventListener('touchstart', (e) => this.handleTouchStart(e), { passive: false });
+                this.canvas.addEventListener('touchmove', (e) => this.handleTouchMove(e), { passive: false });
+                this.canvas.addEventListener('touchend', (e) => this.handleTouchEnd(e));
+
+                // Mouse move for locked pointer
+                document.addEventListener('mousemove', (e) => this.handleMouseMove(e));
+
+                // Pointer lock events
+                document.addEventListener('pointerlockchange', () => this.handleLockChange());
+                document.addEventListener('pointerlockerror', () => console.error('Pointer lock error'));
+
+                // Keyboard events
+                document.addEventListener('keydown', (e) => this.handleKeyDown(e));
+            }
+
+            handlePointerDown(event) {
+                event.preventDefault();
+
+                // If already active, release control (click to release works in any state)
+                if (this.isActive) {
+                    this.isActive = false;
+                    document.exitPointerLock();
+                    return;
+                }
+
+                // Only allow grabbing paddle during active gameplay (not menu or game over)
+                if (this.game.state !== GAME_STATES.PLAYING &&
+                    this.game.state !== GAME_STATES.GOAL_SCORED &&
+                    this.game.state !== GAME_STATES.COUNTDOWN) {
+                    return;
+                }
+
+                const pos = this.getCanvasPosition(event);
+                const paddle = this.game.playerPaddle;
+
+                // Check if click is on the player's paddle
+                const distance = Vector2D.distance(pos, paddle.position);
+                if (distance < paddle.radius + CONFIG.paddle.activationRadius) {
+                    this.isActive = true;
+                    this.paddlePosition = paddle.position.copy();
+                    this.previousPosition = this.paddlePosition.copy();
+                    this.lastUpdateTime = performance.now();
+
+                    // Request pointer lock
+                    this.canvas.requestPointerLock();
+                }
+            }
+
+            handleMouseMove(event) {
+                if (!this.isActive || !this.isLocked) return;
+
+                const currentTime = performance.now();
+                const deltaTime = currentTime - this.lastUpdateTime;
+
+                // Use movementX/Y for locked pointer (relative movement)
+                const movementX = event.movementX || 0;
+                const movementY = event.movementY || 0;
+
+                // Update paddle position with movement
+                this.previousPosition = this.paddlePosition.copy();
+                this.paddlePosition.x += movementX;
+                this.paddlePosition.y += movementY;
+
+                // Constrain paddle position to boundaries (prevent accumulation outside bounds)
+                const paddle = this.game.playerPaddle;
+                this.paddlePosition.x = Math.max(paddle.radius, Math.min(this.canvas.width - paddle.radius, this.paddlePosition.x));
+                this.paddlePosition.y = Math.max(paddle.boundaryMin, Math.min(paddle.boundaryMax, this.paddlePosition.y));
+
+                // Calculate velocity for physics
+                if (deltaTime > 0) {
+                    this.velocity.x = movementX / (deltaTime / 16.67);
+                    this.velocity.y = movementY / (deltaTime / 16.67);
+
+                    const speed = this.velocity.magnitude();
+                    this.speedSamples.push(speed);
+                    if (this.speedSamples.length > 20) {
+                        this.speedSamples.shift();
+                    }
+
+                    // Update adaptive max speed
+                    const sortedSpeeds = [...this.speedSamples].sort((a, b) => b - a);
+                    const top10Percent = Math.ceil(sortedSpeeds.length * 0.1);
+                    if (sortedSpeeds.length >= 10) {
+                        this.maxSpeedDetected = sortedSpeeds.slice(0, top10Percent)
+                            .reduce((a, b) => a + b, 0) / top10Percent;
+                    }
+                }
+
+                this.lastUpdateTime = currentTime;
+
+                // Update paddle target position
+                this.game.playerPaddle.targetPosition = this.paddlePosition.copy();
+            }
+
+            handleTouchStart(event) {
+                event.preventDefault();
+
+                // If already active, release control (tap to release works in any state)
+                if (this.isActive) {
+                    this.isActive = false;
+                    this.canvas.classList.remove('locked');
+                    return;
+                }
+
+                // Only allow grabbing paddle during active gameplay (not menu or game over)
+                if (this.game.state !== GAME_STATES.PLAYING &&
+                    this.game.state !== GAME_STATES.GOAL_SCORED &&
+                    this.game.state !== GAME_STATES.COUNTDOWN) {
+                    return;
+                }
+
+                const pos = this.getCanvasPosition(event);
+                const paddle = this.game.playerPaddle;
+
+                const distance = Vector2D.distance(pos, paddle.position);
+                if (distance < paddle.radius + CONFIG.paddle.activationRadius) {
+                    this.isActive = true;
+                    this.paddlePosition = paddle.position.copy();
+                    this.previousPosition = this.paddlePosition.copy();
+                    this.lastUpdateTime = performance.now();
+                    this.canvas.classList.add('locked');
+                }
+            }
+
+            handleTouchMove(event) {
+                event.preventDefault();
+
+                if (!this.isActive) return;
+
+                const pos = this.getCanvasPosition(event);
+                const currentTime = performance.now();
+                const deltaTime = currentTime - this.lastUpdateTime;
+
+                if (deltaTime > 0) {
+                    this.velocity.x = (pos.x - this.paddlePosition.x) / (deltaTime / 16.67);
+                    this.velocity.y = (pos.y - this.paddlePosition.y) / (deltaTime / 16.67);
+
+                    const speed = this.velocity.magnitude();
+                    this.speedSamples.push(speed);
+                    if (this.speedSamples.length > 20) {
+                        this.speedSamples.shift();
+                    }
+                }
+
+                this.previousPosition = this.paddlePosition.copy();
+                this.paddlePosition = pos.copy();
+                this.lastUpdateTime = currentTime;
+
+                this.game.playerPaddle.targetPosition = this.paddlePosition.copy();
+            }
+
+            handleTouchEnd(event) {
+                // Touch release is handled in handleTouchStart (tap to release)
+            }
+
+            handleLockChange() {
+                this.isLocked = document.pointerLockElement === this.canvas;
+
+                if (this.isLocked) {
+                    this.canvas.classList.add('locked');
+                } else {
+                    this.canvas.classList.remove('locked');
+                    // Release control when pointer lock is lost
+                    this.isActive = false;
+                }
+            }
+
+            handleKeyDown(event) {
+                // ESC key to release control
+                if (event.key === 'Escape' || event.key === 'Esc') {
+                    if (this.isActive) {
+                        this.isActive = false;
+                        document.exitPointerLock();
+                    }
+                }
+            }
+
+            getCanvasPosition(event) {
+                const rect = this.canvas.getBoundingClientRect();
+                let clientX, clientY;
+
+                if (event.touches && event.touches.length > 0) {
+                    clientX = event.touches[0].clientX;
+                    clientY = event.touches[0].clientY;
+                } else {
+                    clientX = event.clientX;
+                    clientY = event.clientY;
+                }
+
+                return new Vector2D(
+                    (clientX - rect.left) * (this.canvas.width / rect.width),
+                    (clientY - rect.top) * (this.canvas.height / rect.height)
+                );
+            }
+        }
+
+        // ============================================
+        // RENDERER
+        // ============================================
+        class Renderer {
+            constructor(canvas) {
+                this.canvas = canvas;
+                this.ctx = canvas.getContext('2d');
+                this.goalWidth = 150;
+            }
+
+            clear() {
+                this.ctx.fillStyle = CONFIG.visual.backgroundColor;
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+            }
+
+            renderRink() {
+                // Rink base
+                this.ctx.fillStyle = CONFIG.visual.rinkColor;
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+                // Center line
+                const centerY = this.canvas.height / 2;
+                this.ctx.save();
+                if (CONFIG.visual.glowEnabled) {
+                    this.ctx.shadowColor = CONFIG.visual.centerLineColor;
+                    this.ctx.shadowBlur = 20;
+                }
+                this.ctx.strokeStyle = CONFIG.visual.centerLineColor;
+                this.ctx.lineWidth = 3;
+                this.ctx.setLineDash([10, 10]);
+                this.ctx.beginPath();
+                this.ctx.moveTo(0, centerY);
+                this.ctx.lineTo(this.canvas.width, centerY);
+                this.ctx.stroke();
+                this.ctx.setLineDash([]);
+                this.ctx.restore();
+            }
+
+            renderGoals() {
+                const centerX = this.canvas.width / 2;
+
+                this.ctx.fillStyle = CONFIG.visual.goalColor;
+
+                // Top goal (CPU)
+                this.ctx.fillRect(
+                    centerX - this.goalWidth / 2,
+                    0,
+                    this.goalWidth,
+                    20
+                );
+
+                // Bottom goal (Player)
+                this.ctx.fillRect(
+                    centerX - this.goalWidth / 2,
+                    this.canvas.height - 20,
+                    this.goalWidth,
+                    20
+                );
+            }
+
+            renderPaddle(paddle, isPlayer, showClickHint = false) {
+                this.ctx.save();
+
+                const color = isPlayer ? CONFIG.visual.playerColor : CONFIG.visual.cpuColor;
+
+                // Show pulsing ring if paddle is clickable
+                if (showClickHint) {
+                    const pulse = Math.sin(Date.now() / 300) * 0.3 + 0.7;
+                    this.ctx.strokeStyle = '#ffff00'; // Yellow for visibility
+                    this.ctx.lineWidth = 4;
+                    this.ctx.globalAlpha = pulse;
+                    this.ctx.beginPath();
+                    this.ctx.arc(paddle.position.x, paddle.position.y, paddle.radius + 15, 0, Math.PI * 2);
+                    this.ctx.stroke();
+                    this.ctx.globalAlpha = 1.0;
+                }
+
+                if (CONFIG.visual.glowEnabled) {
+                    this.ctx.shadowColor = color;
+                    this.ctx.shadowBlur = 25;
+                }
+
+                const gradient = this.ctx.createRadialGradient(
+                    paddle.position.x, paddle.position.y, 0,
+                    paddle.position.x, paddle.position.y, paddle.radius
+                );
+                gradient.addColorStop(0, color);
+                gradient.addColorStop(1, this.adjustBrightness(color, -50));
+
+                this.ctx.fillStyle = gradient;
+                this.ctx.beginPath();
+                this.ctx.arc(paddle.position.x, paddle.position.y, paddle.radius, 0, Math.PI * 2);
+                this.ctx.fill();
+
+                this.ctx.restore();
+            }
+
+            renderDisk(disk, showClickHint = false) {
+                this.ctx.save();
+
+                // Show pulsing ring if disk is clickable
+                if (showClickHint) {
+                    const pulse = Math.sin(Date.now() / 300) * 0.3 + 0.7;
+                    this.ctx.strokeStyle = CONFIG.visual.playerColor;
+                    this.ctx.lineWidth = 3;
+                    this.ctx.globalAlpha = pulse;
+                    this.ctx.beginPath();
+                    this.ctx.arc(disk.position.x, disk.position.y, disk.radius + CONFIG.paddle.activationRadius, 0, Math.PI * 2);
+                    this.ctx.stroke();
+                    this.ctx.globalAlpha = 1.0;
+                }
+
+                if (CONFIG.visual.glowEnabled) {
+                    this.ctx.shadowColor = CONFIG.visual.diskColor;
+                    this.ctx.shadowBlur = 20;
+                }
+
+                const gradient = this.ctx.createRadialGradient(
+                    disk.position.x, disk.position.y, 0,
+                    disk.position.x, disk.position.y, disk.radius
+                );
+                gradient.addColorStop(0, '#ffffff');
+                gradient.addColorStop(1, '#cccccc');
+
+                this.ctx.fillStyle = gradient;
+                this.ctx.beginPath();
+                this.ctx.arc(disk.position.x, disk.position.y, disk.radius, 0, Math.PI * 2);
+                this.ctx.fill();
+
+                this.ctx.restore();
+            }
+
+            renderBonus(bonus) {
+                this.ctx.save();
+
+                const color = this.getBonusColor(bonus.type);
+                const pulse = Math.sin(Date.now() / 200) * 0.3 + 0.7;
+
+                this.ctx.shadowColor = color;
+                this.ctx.shadowBlur = 15 * pulse;
+
+                this.ctx.fillStyle = color;
+                this.ctx.strokeStyle = '#ffffff';
+                this.ctx.lineWidth = 2;
+
+                this.ctx.fillRect(
+                    bonus.position.x - bonus.size / 2,
+                    bonus.position.y - bonus.size / 2,
+                    bonus.size,
+                    bonus.size
+                );
+                this.ctx.strokeRect(
+                    bonus.position.x - bonus.size / 2,
+                    bonus.position.y - bonus.size / 2,
+                    bonus.size,
+                    bonus.size
+                );
+
+                this.ctx.restore();
+            }
+
+            renderShield(isPlayer) {
+                const centerX = this.canvas.width / 2;
+                const y = isPlayer ? this.canvas.height - 30 : 30;
+
+                this.ctx.save();
+                this.ctx.fillStyle = 'rgba(100, 200, 255, 0.3)';
+                this.ctx.strokeStyle = '#00aaff';
+                this.ctx.lineWidth = 3;
+
+                this.ctx.fillRect(centerX - this.goalWidth / 2, y - 15, this.goalWidth, 30);
+                this.ctx.strokeRect(centerX - this.goalWidth / 2, y - 15, this.goalWidth, 30);
+                this.ctx.restore();
+            }
+
+            renderScore(playerScore, cpuScore) {
+                this.ctx.save();
+                this.ctx.font = 'bold 48px Arial';
+                this.ctx.textAlign = 'center';
+
+                // CPU score (top)
+                this.ctx.fillStyle = CONFIG.visual.cpuColor;
+                this.ctx.fillText(cpuScore, this.canvas.width / 2, 60);
+
+                // Player score (bottom)
+                this.ctx.fillStyle = CONFIG.visual.playerColor;
+                this.ctx.fillText(playerScore, this.canvas.width / 2, this.canvas.height - 30);
+
+                this.ctx.restore();
+            }
+
+            getBonusColor(type) {
+                const colors = {
+                    multidisk: '#ff00ff',
+                    speed_boost: '#00ff00',
+                    speed_slow: '#0000ff',
+                    size_large_paddle: '#ffff00',
+                    size_small_paddle: '#ff8800',
+                    size_large_disk: '#00ffff',
+                    size_small_disk: '#ff00aa',
+                    shield: '#00aaff'
+                };
+                return colors[type] || '#ffffff';
+            }
+
+            adjustBrightness(color, amount) {
+                const num = parseInt(color.replace('#', ''), 16);
+                const r = Math.min(255, Math.max(0, (num >> 16) + amount));
+                const g = Math.min(255, Math.max(0, ((num >> 8) & 0x00FF) + amount));
+                const b = Math.min(255, Math.max(0, (num & 0x0000FF) + amount));
+                return '#' + ((r << 16) | (g << 8) | b).toString(16).padStart(6, '0');
+            }
+        }
+
+        // ============================================
+        // GAME STATE MANAGER
+        // ============================================
+        class Game {
+            constructor(canvas) {
+                this.canvas = canvas;
+                this.state = GAME_STATES.MENU;
+                this.playerScore = 0;
+                this.cpuScore = 0;
+                this.stateTimer = 0;
+
+                // Create objects
+                this.disks = [];
+                this.playerPaddle = new Paddle(
+                    new Vector2D(canvas.width / 2, canvas.height - 100),
+                    CONFIG.paddle.radius,
+                    true,
+                    canvas
+                );
+                this.cpuPaddle = new Paddle(
+                    new Vector2D(canvas.width / 2, 100),
+                    CONFIG.paddle.radius,
+                    false,
+                    canvas
+                );
+
+                // Systems
+                this.physics = new PhysicsEngine();
+                this.ai = new AIController(this.cpuPaddle);
+                this.bonusSystem = new BonusSystem(this);
+                this.input = new InputHandler(canvas, this);
+                this.renderer = new Renderer(canvas);
+
+                // Shields
+                this.playerShield = false;
+                this.cpuShield = false;
+
+                // Init
+                this.input.init();
+                this.setupUI();
+            }
+
+            setupUI() {
+                document.getElementById('startBtn').addEventListener('click', () => {
+                    this.startGame();
+                });
+
+                document.getElementById('restartBtn').addEventListener('click', () => {
+                    this.reset();
+                    this.startGame();
+                });
+            }
+
+            startGame() {
+                document.getElementById('instructions').style.display = 'none';
+                this.changeState(GAME_STATES.COUNTDOWN);
+            }
+
+            changeState(newState) {
+                this.state = newState;
+
+                switch (newState) {
+                    case GAME_STATES.COUNTDOWN:
+                        this.stateTimer = CONFIG.game.countdownTime * 1000;
+                        document.getElementById('countdown').style.display = 'block';
+                        break;
+                    case GAME_STATES.PLAYING:
+                        document.getElementById('countdown').style.display = 'none';
+                        this.serveDisk();
+                        break;
+                    case GAME_STATES.GOAL_SCORED:
+                        this.stateTimer = CONFIG.game.goalDelay;
+                        break;
+                    case GAME_STATES.GAME_OVER:
+                        this.showGameOver();
+                        break;
+                }
+            }
+
+            serveDisk() {
+                // Keep main disk or create new one
+                if (this.disks.length === 0 || !this.disks[0]) {
+                    this.disks.push(new Disk(
+                        new Vector2D(this.canvas.width / 2, this.canvas.height / 2),
+                        CONFIG.disk.radius
+                    ));
+                }
+
+                const disk = this.disks[0];
+                const angle = Math.random() * Math.PI * 2;
+                disk.reset(
+                    new Vector2D(this.canvas.width / 2, this.canvas.height / 2),
+                    new Vector2D(Math.cos(angle), Math.sin(angle))
+                );
+            }
+
+            update(deltaTime) {
+                const currentTime = Date.now();
+
+                switch (this.state) {
+                    case GAME_STATES.COUNTDOWN:
+                        this.stateTimer -= deltaTime;
+                        const secondsLeft = Math.ceil(this.stateTimer / 1000);
+                        document.getElementById('countdown').textContent = secondsLeft > 0 ? secondsLeft : 'GO!';
+
+                        // Allow paddle control during countdown
+                        this.playerPaddle.update(deltaTime);
+                        this.cpuPaddle.update(deltaTime);
+
+                        if (this.stateTimer <= 0) {
+                            this.changeState(GAME_STATES.PLAYING);
+                        }
+                        break;
+
+                    case GAME_STATES.PLAYING:
+                        // Update disks
+                        this.disks.forEach(disk => {
+                            if (disk.isActive) {
+                                disk.update(deltaTime);
+                                this.physics.checkWallCollision(disk, this.canvas);
+                                this.physics.checkPaddleCollision(disk, this.playerPaddle);
+                                this.physics.checkPaddleCollision(disk, this.cpuPaddle);
+                                this.bonusSystem.checkCollisions(disk);
+                            }
+                        });
+
+                        // Update paddles
+                        this.playerPaddle.update(deltaTime);
+                        this.cpuPaddle.update(deltaTime);
+
+                        // Update AI
+                        this.ai.update(this.disks, deltaTime, currentTime);
+
+                        // Update bonus system
+                        this.bonusSystem.update(deltaTime, currentTime);
+
+                        // Check goals
+                        this.checkGoals();
+
+                        // Update effects UI
+                        this.updateEffectsUI(currentTime);
+                        break;
+
+                    case GAME_STATES.GOAL_SCORED:
+                        this.stateTimer -= deltaTime;
+
+                        // Keep paddles moving during goal pause
+                        this.playerPaddle.update(deltaTime);
+                        this.cpuPaddle.update(deltaTime);
+
+                        if (this.stateTimer <= 0) {
+                            if (this.playerScore >= CONFIG.game.winningScore ||
+                                this.cpuScore >= CONFIG.game.winningScore) {
+                                this.changeState(GAME_STATES.GAME_OVER);
+                            } else {
+                                this.changeState(GAME_STATES.COUNTDOWN);
+                            }
+                        }
+                        break;
+                }
+            }
+
+            checkGoals() {
+                const goalLeft = this.canvas.width / 2 - this.physics.goalWidth / 2;
+                const goalRight = this.canvas.width / 2 + this.physics.goalWidth / 2;
+
+                for (let i = this.disks.length - 1; i >= 0; i--) {
+                    const disk = this.disks[i];
+                    if (!disk.isActive) continue;
+
+                    // CPU goal (top)
+                    if (disk.position.y - disk.radius < 0 &&
+                        disk.position.x > goalLeft &&
+                        disk.position.x < goalRight) {
+                        if (this.cpuShield) {
+                            disk.position.y = disk.radius;
+                            disk.velocity.y *= -1;
+                        } else {
+                            this.handleGoal('player', i);
+                        }
+                    }
+
+                    // Player goal (bottom)
+                    if (disk.position.y + disk.radius > this.canvas.height &&
+                        disk.position.x > goalLeft &&
+                        disk.position.x < goalRight) {
+                        if (this.playerShield) {
+                            disk.position.y = this.canvas.height - disk.radius;
+                            disk.velocity.y *= -1;
+                        } else {
+                            this.handleGoal('cpu', i);
+                        }
+                    }
+                }
+            }
+
+            handleGoal(scorer, diskIndex) {
+                if (scorer === 'player') {
+                    this.playerScore++;
+                } else {
+                    this.cpuScore++;
+                }
+
+                // Spawn goal particles
+                const goalY = scorer === 'player' ? 0 : this.canvas.height;
+                const goalColor = scorer === 'player' ? CONFIG.visual.playerColor : CONFIG.visual.cpuColor;
+                this.spawnGoalParticles(this.canvas.width / 2, goalY, goalColor);
+
+                // Remove scored disk (but keep main disk if it's index 0)
+                if (diskIndex > 0) {
+                    this.disks.splice(diskIndex, 1);
+                } else {
+                    this.disks[0].isActive = false;
+                }
+
+                // AI adaptation
+                this.ai.recordGoal(scorer);
+
+                // Only handle game state if main disk scored
+                if (diskIndex === 0) {
+                    // Transition to GOAL_SCORED state (brief pause, then countdown)
+                    this.changeState(GAME_STATES.GOAL_SCORED);
+                }
+            }
+
+            spawnGoalParticles(x, y, color) {
+                const particleCount = 120;
+                const container = document.getElementById('gameContainer');
+
+                for (let i = 0; i < particleCount; i++) {
+                    const particle = document.createElement('div');
+                    particle.className = 'goal-particle';
+                    particle.style.left = x + 'px';
+                    particle.style.top = y + 'px';
+                    particle.style.backgroundColor = color;
+
+                    // Random direction and distance
+                    const angle = (Math.PI * 2 * i) / particleCount;
+                    const distance = 50 + Math.random() * 100;
+                    const tx = Math.cos(angle) * distance;
+                    const ty = Math.sin(angle) * distance;
+
+                    particle.style.setProperty('--tx', tx + 'px');
+                    particle.style.setProperty('--ty', ty + 'px');
+
+                    container.appendChild(particle);
+
+                    // Remove particle after animation
+                    setTimeout(() => particle.remove(), 1500);
+                }
+            }
+
+            updateEffectsUI(currentTime) {
+                const effectsList = document.getElementById('effectsList');
+
+                // Filter out Multi-Disk (no timer) and build HTML for active effects
+                const activeTimedEffects = this.bonusSystem.activeEffects.filter(
+                    effect => effect.getName() !== 'Multi-Disk'
+                );
+
+                if (activeTimedEffects.length === 0) {
+                    effectsList.innerHTML = '';
+                    return;
+                }
+
+                let html = '';
+                activeTimedEffects.forEach(effect => {
+                    const remaining = Math.ceil(effect.getRemainingTime(currentTime) / 1000);
+                    html += `<div class="effect-item">${effect.getName()}: ${remaining}s</div>`;
+                });
+                effectsList.innerHTML = html;
+            }
+
+            showGameOver() {
+                const gameOverDiv = document.getElementById('gameOver');
+                const winnerText = document.getElementById('winnerText');
+                const finalScore = document.getElementById('finalScore');
+
+                if (this.playerScore >= CONFIG.game.winningScore) {
+                    winnerText.textContent = 'You Win!';
+                    winnerText.style.color = CONFIG.visual.playerColor;
+                } else {
+                    winnerText.textContent = 'CPU Wins!';
+                    winnerText.style.color = CONFIG.visual.cpuColor;
+                }
+
+                finalScore.textContent = `${this.playerScore} - ${this.cpuScore}`;
+                gameOverDiv.style.display = 'block';
+            }
+
+            reset() {
+                this.playerScore = 0;
+                this.cpuScore = 0;
+                this.disks = [];
+                this.bonusSystem.bonuses = [];
+                this.bonusSystem.activeEffects = [];
+                this.bonusSystem.spawnTimer = 0;
+                this.playerShield = false;
+                this.cpuShield = false;
+                this.playerPaddle.radius = this.playerPaddle.originalRadius;
+                this.cpuPaddle.radius = this.cpuPaddle.originalRadius;
+                this.ai.difficulty = CONFIG.ai.startingDifficulty;
+                this.ai.updateParameters();
+                document.getElementById('gameOver').style.display = 'none';
+                document.getElementById('effectsList').innerHTML = '';
+            }
+
+            render() {
+                this.renderer.clear();
+                this.renderer.renderRink();
+                this.renderer.renderGoals();
+
+                // Render bonuses
+                this.bonusSystem.bonuses.forEach(bonus => {
+                    this.renderer.renderBonus(bonus);
+                });
+
+                // Render shields
+                if (this.playerShield) {
+                    this.renderer.renderShield(true);
+                }
+                if (this.cpuShield) {
+                    this.renderer.renderShield(false);
+                }
+
+                // Render paddles
+                const showPaddleHint = !this.input.isActive &&
+                    (this.state === GAME_STATES.PLAYING || this.state === GAME_STATES.COUNTDOWN);
+                this.renderer.renderPaddle(this.playerPaddle, true, showPaddleHint);
+                this.renderer.renderPaddle(this.cpuPaddle, false);
+
+                // Render disks
+                this.disks.forEach((disk) => {
+                    if (disk.isActive) {
+                        this.renderer.renderDisk(disk, false);
+                    }
+                });
+
+                // Render score
+                this.renderer.renderScore(this.playerScore, this.cpuScore);
+            }
+        }
+
+        // ============================================
+        // GAME LOOP
+        // ============================================
+        class GameLoop {
+            constructor(game) {
+                this.game = game;
+                this.lastTime = 0;
+                this.accumulator = 0;
+                this.fixedDeltaTime = 16.67;
+                this.maxFrameTime = 250;
+            }
+
+            start() {
+                this.lastTime = performance.now();
+                this.loop();
+            }
+
+            loop() {
+                requestAnimationFrame(() => this.loop());
+
+                const currentTime = performance.now();
+                let frameTime = currentTime - this.lastTime;
+
+                if (frameTime > this.maxFrameTime) {
+                    frameTime = this.maxFrameTime;
+                }
+
+                this.lastTime = currentTime;
+                this.accumulator += frameTime;
+
+                while (this.accumulator >= this.fixedDeltaTime) {
+                    this.game.update(this.fixedDeltaTime);
+                    this.accumulator -= this.fixedDeltaTime;
+                }
+
+                this.game.render();
+            }
+        }
+
+        // ============================================
+        // INITIALIZATION
+        // ============================================
+        function resizeCanvas(canvas) {
+            const container = document.getElementById('gameContainer');
+            const aspectRatio = 600 / 800;
+            const maxWidth = Math.min(window.innerWidth - 40, 600);
+            const maxHeight = window.innerHeight - 40;
+
+            let width = maxWidth;
+            let height = width / aspectRatio;
+
+            if (height > maxHeight) {
+                height = maxHeight;
+                width = height * aspectRatio;
+            }
+
+            canvas.style.width = width + 'px';
+            canvas.style.height = height + 'px';
+        }
+
+        // Start the game
+        const canvas = document.getElementById('gameCanvas');
+        resizeCanvas(canvas);
+        window.addEventListener('resize', () => resizeCanvas(canvas));
+
+        const game = new Game(canvas);
+        const gameLoop = new GameLoop(game);
+        gameLoop.start();
+    </script>
+</body>
+</html>
